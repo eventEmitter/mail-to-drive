@@ -9,7 +9,13 @@
 
 	var   Imap 			= require( "imap" )
 		, request 		= require( "request" )
-		, Mailparser 	= require( "mailparser" ).MailParser;
+		, Mailparser 	= require( "mailparser" ).MailParser
+		, OCR 			= require( "pdf-extract" );
+
+
+	var   fs 			= require( "fs" )
+		, path 			= require( "path" );
+
 
 
 
@@ -28,45 +34,89 @@
 		}
 
 
+		, __doOcr: function( document, callback ){
+			var tempPath = path.resolve( __dirname, "../temp/" + Math.random() + "_" + Date.now() + ".pdf.pdf" );
+			fs.writeFile( tempPath, document, function( err ){
+				if ( err ) callback ( err );
+				else {
+					var ocr = OCR( tempPath, { type: "ocr" }, function( err ){
+						if ( err ) {
+							callback ( err );
+							fs.unlink( tempPath );
+						}
+					}.bind( this ) );
+
+					ocr.on( "complete", function( data ){
+						callback( null, data );
+						fs.unlink( tempPath );
+					}.bind( this ) );
+
+					ocr.on( "error", function( err ){
+						callback( err );
+						fs.unlink( tempPath );
+					}.bind( this ) );
+				}
+			}.bind( this ) );
+		}
+
+
+
 		, __storeDocument: function( document ){
 			log.info( "got document, length:", document.length );
 			var m = moment();
 
-			this.__getOAuthToken( function( err, token ){
-				if ( err ) log.trace( err );
-				else {
-					request( {
-						  uri: "https://www.googleapis.com/upload/drive/v2/files"
-						, method: "POST"
-						, qs: {
-							  uploadType: 					"multipart"
-							, ocr: 							true
-							, ocrLanguage: 					"de"
-							, useContentAsIndexableText: 	true
-							, access_token: 				token
-						}
-						, multipart: [
-							{
-								  "content-type": "application/json"
-								, body: JSON.stringify( {
-									  title: 			"documents/scanned/" + m.format( "YYYY" ) + "/" + m.format( "MMMM" ) + "/test.pdf"
-									, description: 		"Scanned @ the Joinbox HQ"
-									, mimeType: 		"application/pdf"
-									, "parents[]": 			[ "documents" ]
-								} )
-							}
-							, {
-								  "content-type": "application/pdf"
-								, "Content-Transfer-Encoding": "base64"
-								, body: document.toString( "base64" )
-							}
-						]
-					}, function( err, response, body ){
-						log.trace( err );
-						log.info( "upload was successfull .." );
-					}.bind( this ) );
+
+			log.info( "extracting text ....", this );
+			this.__doOcr( document, function( err, data ){
+				var filename = "scan", text = "";
+				if ( data && data.text_pages ){
+					text = data.text_pages.join( " " );
+					
+					var   entity 	= ( new RegExp( "(" + this.__config.ocr.entities.join( "|" ) + ")", "gi" ).exec( text ) || [ "", "" ] )[ 1 ] 
+						, klass 	= ( new RegExp( "(" + this.__config.ocr.classes.join( "|" ) + ")", "gi" ).exec( text ) || [ "", "" ] )[ 1 ] ;
+
+					if ( klass ) filename = klass;
+					if ( entity ){
+						if ( klass ) filename += "-" + entity;
+						else filename = entity;
+					}					
 				}
-			}.bind( this ) );			
+
+				this.__getOAuthToken( function( err, token ){
+					if ( err ) log.trace( err );
+					else {
+						request( {
+							  uri: "https://www.googleapis.com/upload/drive/v2/files"
+							, method: "POST"
+							, qs: {
+								  uploadType: 					"multipart"
+								, access_token: 				token
+							}
+							, multipart: [
+								{
+									  "content-type": "application/json"
+									, body: JSON.stringify( {
+										  title: 					m.format( "YYYY" ) + "-" + m.format( "MMMM" ) + "-" + filename + ".pdf"
+										, description: 				"Scanned @ the Joinbox HQ"
+										, mimeType: 				"application/pdf"
+										, "indexableText.text": 	text
+										, "parents": 				[ { id: "0B6wMaOR1qteTSS1vcEhCd2RqZ3M" } ]
+									} )
+								}
+								, {
+									  "content-type": "application/pdf"
+									, "Content-Transfer-Encoding": "base64"
+									, body: document.toString( "base64" )
+								}
+							]
+						}, function( err, response, body ){
+							log.trace( err );
+							log.info( "upload was successfull .." );
+						}.bind( this ) );
+					}
+				}.bind( this ) );	
+
+			}.bind( this ) );
 		}
 
 

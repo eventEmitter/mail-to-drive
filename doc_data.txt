@@ -1,0 +1,7 @@
+InfoKey: Creator
+InfoValue: ScanPDFMaker 1.0
+InfoKey: Producer
+InfoValue: CLX-3180 Series (PDF - 200 dpi)
+InfoKey: CreationDate
+InfoValue: 20130309191222+01'00'
+NumberOfPages: 2
